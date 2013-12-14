@@ -857,11 +857,11 @@ struct
     
   let rec display_noAxiom = function 
     | [] -> ""
-    | (s,elt_l)::q -> (List.fold_left (fun acc i -> Printf.sprintf "%s, (%d,%d)" acc s i) "" elt_l)^(display_noAxiom q)
+    | (s,elt_l)::q -> List.fold_left (fun acc i -> if acc = "" then Printf.sprintf "(%d,%d)" s i else Printf.sprintf "%s, (%d,%d)" acc s i) (display_noAxiom q) elt_l
   
   let display cons = 
     Printf.sprintf "%s,%d |-%s%s %s" (Recipe.display_variable cons.variable) (Recipe.get_support cons.variable) 
     (if cons.noCons <> [] then "{"^(display_noCons cons.noCons)^"}" else "")
-    (if cons.noCons <> [] then "{"^(display_noAxiom cons.noAxiom)^"}" else "")
+    (if cons.noAxiom <> [] then "{"^(display_noAxiom cons.noAxiom)^"}" else "")
     (Term.display_term cons.message)
 end

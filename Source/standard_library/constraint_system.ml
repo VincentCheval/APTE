@@ -71,12 +71,15 @@ let display = function
       let conj_mess_eq = Printf.sprintf "Message_equation = %s" 
         (display_conjunction (fun (t1,t2) -> Printf.sprintf "%s = %s" (Term.display_term t1) (Term.display_term t2)) 
         sub_csys.conjunction_message_eq) in
+      let conj_recipe_eq = Printf.sprintf "Recipe_equation = %s" 
+        (display_conjunction (fun (r1,r2) -> Printf.sprintf "%s = %s" (Recipe.display_recipe r1) (Recipe.display_recipe r2)) 
+        sub_csys.conjunction_recipe_eq) in
       
       let formula = Printf.sprintf "Formula = %s" (display_conjunction (fun neq -> (Term.display_formula neq.message_neq)^"("^(display_assoc_table neq.assoc_table)^")") sub_csys.conjunction_message_neq) in
       (* Do More *)
       let endline = ")\n" in
       
-      Printf.sprintf "%s%s\n%s\n%s\n%s\n%s" line1 frame cons_set formula conj_mess_eq endline
+      Printf.sprintf "%s%s\n%s\n%s\n%s\n%s\n%s" line1 frame cons_set formula conj_mess_eq conj_recipe_eq endline
   
 (******** Addition functions ********)
 

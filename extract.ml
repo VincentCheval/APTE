@@ -56,6 +56,6 @@ let _ =
   ignore (Sys.command "mkdir Extract/Source");
   ignore (Sys.command "mkdir Extract/Example");
   ignore (Sys.command "cp Example/*.txt Extract/Example");
-  ignore (Sys.command "cp README Extract/README");
+  ignore (Sys.command "cp README.md Extract/README.md");
   ignore (Sys.command "cp Documentation.pdf Extract/Documentation.pdf");
   get_all_adress "Source"
