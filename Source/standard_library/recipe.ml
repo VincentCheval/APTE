@@ -6,6 +6,7 @@ type link =
   | NoLink
   | RLink of recipe
   | CLink of context 
+  | VLink of variable
 
 and variable = 
   {
@@ -30,7 +31,50 @@ and context =
   | CVar of variable
   | CPath of path
   | CFunc of Term.symbol * context list
+  
+  
+(******* General functions on list ********)  
+  
+let rec is_equal_list f l1 l2 = match l1,l2 with 
+  | [],[] -> true
+  | _,[] | [],_ -> false
+  | t1::q1,t2::q2 when f t1 t2 -> is_equal_list f q1 q2
+  | _,_ -> false
+  
+let rec order_list order_f l1 l2 = match l1,l2 with 
+  | [],[] -> 0
+  | [],_ -> -1
+  | _,[] -> 1
+  | t1::q1, t2::q2 -> let ord = order_f t1 t2 in
+      if ord = 0
+      then order_list order_f q1 q2
+      else ord    
+          
+let rec insert_in_sorted_list order_f elt = function
+  | [] -> [elt]
+  | t::q -> 
+      let ord = order_f elt t in
+      if ord = 0 || ord = -1
+      then elt::t::q
+      else t::(insert_in_sorted_list order_f elt q)
+      
+(*let rec insert_in_sorted_list_no_dupplicate order_f elt = function
+  | [] -> [elt]
+  | t::q -> 
+      let ord = order_f elt t in
+      if ord = 0
+      then t::q 
+      else if ord = -1
+      then elt::t::q
+      else t::(insert_in_sorted_list_no_dupplicate order_f elt q)*)
+            
 
+let rec search_and_remove f_pred = function  
+  | [] -> raise Not_found
+  | t::q when f_pred t -> (t,q)
+  | t::q -> let (t',l) = search_and_remove f_pred q in
+      (t',t::l)
+      
 (******** Fresh function ********)
 
 let accumulator_variable = ref 0
@@ -78,6 +122,11 @@ let rec fresh_free_variable_list arity support = match arity with
 let rec fresh_variable_list2 arity support = match arity with
   | 0 -> []
   | ar -> (Var(fresh_variable support))::(fresh_variable_list2 (ar-1) support)
+  
+let order_variable v1 v2 = match v1.number with
+  | v when v = v2.number -> 0
+  | v when v < v2.number -> -1
+  | _ -> 1  
 
 (******** Generation of recipe ********)
 
@@ -223,7 +272,10 @@ let rec unify_term t1 t2 = match t1,t2 with
   | Var(v1),Var(v2) ->
       if not v1.free
       then link v1 t2
-      else link v2 t1
+      else
+        if v2.free && order_variable v1 v2 = 1
+        then link v1 t2
+        else link v2 t1
   | Var(v1), _ -> if occurs v1 t2 then raise Not_unifiable else link v1 t2
   | _, Var(v2) -> if occurs v2 t1 then raise Not_unifiable else link v2 t1
   | Axiom(n1), Axiom(n2) when n1 == n2 -> ()
@@ -291,6 +343,10 @@ let rec is_path_of_recipe recipe (l,ax) = match l,recipe with
   | f1::q,Func(f2,args) when Term.is_equal_symbol f1 f2 ->
       is_path_of_recipe (List.hd args) (q,ax)
   | _,_ -> false
+  
+let order_path path1 path2 = match path1,path2 with
+  | (f_list1,ax1),(f_list2,ax2) when ax1 = ax2 -> order_list Term.order_symbol f_list1 f_list2
+  | (_,ax1),(_,ax2) -> compare ax1 ax2  
     
 (*******************************
 ***          Context         ***
@@ -455,6 +511,494 @@ let apply_simplify_substitution_on_formulas subst elt f_iter_elt = match subst w
       )
   | _ -> Debug.internal_error "[recipe.ml >> apply_substitution_on_formulas] The domain of the subtitution should contain only one variable"
   
+  
+(***************************************
+***         General Formulas         ***
+****************************************)  
+
+(* The term symbol list and path symbol list should be always ordered *)
+type atomic_formula = 
+  | Neq of variable * Term.symbol list * path list
+  | Eq of variable * context
+
+(** The first list corresponds to the existential variables.
+    The second element is disjunction of conjunction of atomic formulas.*)
+type 'a general_formula =
+  {
+    elt: 'a;
+    neg_to_remove : variable list;
+    formula : atomic_formula list
+  }
+
+type 'a partition_elt =
+  | PartVar of variable * 'a general_formula list
+  | PartPath of path * 'a general_formula list
+  | PartSymb of Term.symbol * variable list * 'a general_formula list
+  | PartNeq of Term.symbol list * path list * 'a general_formula list
+  | PartEmpty of 'a general_formula list
+
+(******* Order functions *********)
+
+let order_atomic atm1 atm2 = match atm1,atm2 with
+  | Eq(v1,_),Neq(v2,_,_) -> 
+      let ord = order_variable v1 v2 in
+      if ord = 0
+      then 1
+      else ord
+  | Neq(v1,_,_),Eq(v2,_) -> 
+      let ord = order_variable v1 v2 in
+      if ord = 0
+      then -1
+      else ord
+  | Neq(v1,f_list1,p_list1),Neq(v2,f_list2,p_list2) -> 
+      let ord1 = order_variable v1 v2 in
+      if ord1 = 0 
+      then 
+        let ord2 = order_list Term.order_symbol f_list1 f_list2 in
+        if ord2 = 0
+        then order_list order_path p_list1 p_list2
+        else ord2
+      else ord1
+  | Eq(v1,_),Eq(v2,_) -> order_variable v1 v2
+  
+(******* Manipulation of variables *********)
+  
+let linked_variables_var = ref []
+
+let link_var var1 var2 = 
+  var1.link <- (VLink var2);
+  linked_variables_var := var1::(!linked_variables_var)
+  
+let rec follow_link_var = function
+  | CFunc(f,args) -> CFunc(f,List.map follow_link_var args)
+  | CVar({link = VLink v;_}) -> CVar(v)
+  | context -> context
+  
+let cleanup_var () =
+  List.iter (fun var -> var.link <- NoLink) !linked_variables_var;
+  linked_variables_var := []  
+    
+(******* Partition functions *********)
+  
+let rec add_formula_in_partition_from_eq elt neg_to_remove target_var context atm_list partition = match partition,context with
+  | [], CVar(var) ->
+      if var.free
+      then [PartVar (var,[{ elt = elt; neg_to_remove = neg_to_remove; formula = atm_list}])]
+      else 
+        begin
+          var.link <- VLink target_var;
+          let general_formula = 
+            { 
+              elt = elt;
+              neg_to_remove = neg_to_remove;
+              formula = List.map (function 
+                | Neq({link = VLink v;_},f_list,p_list) -> Neq(v,f_list,p_list)
+                | Neq(v,f_list,p_list) -> Neq(v,f_list,p_list)
+                | Eq(v,context) -> Eq(v,follow_link_var context)
+              ) atm_list
+            }
+          in
+          var.link <- NoLink;
+          [PartEmpty [general_formula]] 
+        end
+        
+  | [],CPath(path) -> [PartPath (path, [{ elt = elt; neg_to_remove = neg_to_remove; formula = atm_list}])]
+  
+  | [],CFunc(symb,c_list) -> 
+      let support = get_support target_var in
+      let arity = Term.get_arity symb in
+      let list_var = fresh_free_variable_list arity support in
+            
+      let new_atm_list = List.fold_right2 (fun v c at_l -> (Eq (v,c))::at_l) list_var c_list atm_list in
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = new_atm_list} in
+      
+      [PartSymb (symb,list_var,[general_formula])]
+      
+  | PartVar(var,l)::q,CVar(var') when is_equal_variable var var' -> 
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = atm_list} in
+      (PartVar (var,general_formula::l))::q
+      
+  | PartEmpty(l)::q,CVar(var) when not var.free -> 
+      var.link <- VLink target_var;
+      let general_formula = 
+        { 
+          elt = elt;
+          neg_to_remove = neg_to_remove;
+          formula = List.map (function 
+            | Neq({link = VLink v;_},f_list,p_list) -> Neq(v,f_list,p_list)
+            | Neq(v,f_list,p_list) -> Neq(v,f_list,p_list)
+            | Eq(v,context) -> Eq(v,follow_link_var context)
+          ) atm_list
+        }
+      in
+      var.link <- NoLink;
+      (PartEmpty (general_formula::l))::q
+      
+  | PartPath(path,l)::q, CPath(path') when is_equal_path path path' -> 
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = atm_list} in
+      (PartPath(path,general_formula::l))::q
+      
+  | PartSymb(symb,v_list,l)::q, CFunc(symb',c_list) when Term.is_equal_symbol symb symb' ->
+      let new_atm_list = List.fold_right2 (fun v c at_l -> (Eq (v,c))::at_l) v_list c_list atm_list in
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = new_atm_list} in
+      (PartSymb (symb,v_list,general_formula::l))::q
+      
+  | t::q, _ -> t::(add_formula_in_partition_from_eq elt neg_to_remove target_var context atm_list q)
+  
+  
+let rec add_formula_in_partition_from_neq elt neg_to_remove atm_list (symb_l,path_l) = function
+  | [] -> 
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = atm_list} in
+      [PartNeq (symb_l,path_l, [general_formula])]
+      
+  | PartNeq (symb_l',path_l',form_l)::q when 
+    is_equal_list Term.is_equal_symbol symb_l symb_l' && 
+    is_equal_list is_equal_path path_l path_l' -> 
+      let general_formula = { elt = elt; neg_to_remove = neg_to_remove; formula = atm_list} in
+      (PartNeq (symb_l,path_l, general_formula::form_l))::q
+      
+  | t::q -> t::(add_formula_in_partition_from_neq elt neg_to_remove atm_list (symb_l,path_l) q)
+  
+let rec add_formula_in_partition_from_empty general_formula = function 
+  | [] -> [PartEmpty [general_formula]]
+  | PartEmpty(l)::q -> (PartEmpty (general_formula::l))::q
+  | t::q -> t::(add_formula_in_partition_from_empty general_formula q)
+
+let rec partitionate target_var = function
+  | [] -> []
+  | general_formula::q ->
+      let current_partition = partitionate target_var q in
+      
+      let rec generate_new_partition atm_list = function
+        | [] -> add_formula_in_partition_from_empty general_formula current_partition
+        | Neq(var,symb_l,path_l)::q' when is_equal_variable var target_var -> 
+            add_formula_in_partition_from_neq 
+              general_formula.elt 
+              general_formula.neg_to_remove 
+              (atm_list@q')
+              (symb_l,path_l) 
+              current_partition
+        | Eq(var,context)::q' when is_equal_variable var target_var -> 
+            add_formula_in_partition_from_eq 
+              general_formula.elt 
+              general_formula.neg_to_remove target_var 
+              context 
+              (atm_list@q')
+              current_partition
+        | t::q' -> generate_new_partition (t::atm_list) q'
+      in
+      
+      (generate_new_partition [] general_formula.formula)  
+
+      
+      
+
+  
+  
+(* The not free variables should be disjoint in c1 and c2. *)
+let rec is_equal_context c1 c2 = match c1,c2 with
+  | CVar(v1),CVar(v2) when v1 == v2 && v1.free-> true
+  | CVar(v1),CVar(v2) when v1 == v2 && v1.free = false -> Debug.internal_error "[recipe.ml >> is_equal_context] Existential variables not distinct"
+  | CVar(v1),CVar(v2) when v1.free = false && v2.free = false ->
+      begin match v1.link with
+        | VLink(v3) when v2 == v3 -> true
+        | VLink(_) -> false
+        | NoLink -> link_var v1 v2; true
+        | _ -> Debug.internal_error "[recipe.ml >> is_equal_context] Wrong type of link"
+      end
+  | CPath(p1),CPath(p2) when is_equal_path p1 p2 -> true
+  | CFunc(f1,c_list1), CFunc(f2,c_list2) when Term.is_equal_symbol f1 f2 -> List.for_all2 is_equal_context c_list1 c_list2
+  | _,_ -> false
+       
+(* The formula should be ordered *)
+let rec is_equal_formula formula1 formula2 = match formula1, formula2 with
+  | [],[] -> cleanup_var (); true
+  | Eq(v1,c1)::q1, Eq(v2,c2)::q2 when is_equal_variable v1 v2 && is_equal_context c1 c2 -> is_equal_formula q1 q2
+  | Neq(v1,f_list1,p_list1)::q1,Neq(v2,f_list2,p_list2)::q2 when 
+    is_equal_variable v1 v2 && 
+    is_equal_list Term.is_equal_symbol f_list1 f_list2 &&
+    is_equal_list is_equal_path p_list1 p_list2 ->
+      is_equal_formula q1 q2
+  | _,_ -> false
+  
+let is_equal_general_formula g_formula1 g_formula2 = 
+  if !linked_variables_var <> []
+  then Debug.internal_error "[recipe.ml >> equal_general_formula] The linked variables list should be empty"
+  else is_equal_formula g_formula1.formula g_formula2.formula
+ 
+let search_target_var general_formula_list = 
+
+  let result = ref None in
+  
+  let rec sub_search = function
+    | [] -> ()
+    | form::_ when List.exists (function | Eq(v,_) -> result := Some(v); true | _ -> false) form.formula -> ()
+    | _::q -> sub_search q
+  in
+  
+  sub_search general_formula_list;
+  match !result with
+    | None -> raise Not_found
+    | Some(v) -> v
+
+(******** Factorisation **********)
+
+let rec factorise_general_formulas general_form_list =
+  if general_form_list = []
+  then []
+  else
+    
+    try
+      (* Find a target var *)
+      let target_var = search_target_var general_form_list in
+      
+      (* Create the partition *)
+      let partition  = partitionate target_var general_form_list in
+      
+      (* Factorise the formulas in the partition *)
+      let partition_factorised = List.map (function
+        | PartVar(v,g_form_l) -> PartVar(v,factorise_general_formulas g_form_l)
+        | PartPath(p,g_form_l) -> PartPath(p,factorise_general_formulas g_form_l)
+        | PartSymb(f,v_list,g_form_l) -> PartSymb(f,v_list,factorise_general_formulas g_form_l)
+        | PartNeq(f_list,p_list,g_form_l) -> PartNeq(f_list,p_list,factorise_general_formulas g_form_l)
+        | PartEmpty(g_form_l) -> PartEmpty(factorise_general_formulas g_form_l)
+        ) partition in
+      
+      (* Generate reference for correspondance *)
+      let partsymb = ref [] 
+      and partempty = ref []
+      and partneq = ref []
+      and partpath = ref []
+      and partvar = ref [] in
+      
+      (* Insert Partition *)
+      List.iter (function
+        | PartVar(v,g_form_l) -> partvar := (v,g_form_l) :: !partvar
+        | PartPath(p,g_form_l) -> partpath := insert_in_sorted_list (fun (p1,_) (p2,_) -> order_path p1 p2) (p,g_form_l) !partpath
+        | PartSymb(f,v_list,g_form_l) -> partsymb := insert_in_sorted_list (fun (f1,_,_) (f2,_,_) -> Term.order_symbol f1 f2) (f,v_list,g_form_l) !partsymb
+        | PartNeq(f_list,p_list,g_form_l) -> partneq := (f_list,p_list,g_form_l) :: !partneq
+        | PartEmpty(g_form_l) -> partempty := g_form_l
+        ) partition_factorised;
+        
+      (* Searching the  correspondance *)
+      
+      (* 1 - Verify the empty *)
+      
+      List.iter (fun g_form_1 -> 
+        partvar := List.map (fun (v,g_form_l_2) -> (v,List.filter (fun g_form_2 -> not (is_equal_general_formula g_form_1 g_form_2)) g_form_l_2)) !partvar; 
+        partpath := List.map (fun (p,g_form_l_2) -> (p,List.filter (fun g_form_2 -> not (is_equal_general_formula g_form_1 g_form_2)) g_form_l_2)) !partpath; 
+        partsymb := List.map (fun (f,v_list,g_form_l_2) -> (f,v_list,List.filter (fun g_form_2 -> not (is_equal_general_formula g_form_1 g_form_2)) g_form_l_2)) !partsymb; 
+        partneq := List.map (fun (f_list,p_list,g_form_l_2) -> (f_list,p_list,List.filter (fun g_form_2 -> not (is_equal_general_formula g_form_1 g_form_2)) g_form_l_2)) !partneq
+        ) !partempty;
+        
+      (* 2 - Search the neq *)
+      
+      let rec search_matching_symbol f_list g_form partition_symb = match f_list, partition_symb with
+        | [],_ -> Some(partition_symb)
+        | _,[] -> None
+        | symb::q_symb, (symb',v_list,g_form_l)::q_part when Term.is_equal_symbol symb symb' ->
+            let (l_equal,l_neq) = List.partition (is_equal_general_formula g_form) g_form_l in
+            
+            begin match l_equal with
+              | [] -> None
+              | [_] -> 
+                  begin match search_matching_symbol q_symb g_form q_part with
+                    | None -> None
+                    | Some(new_partition) -> Some((symb,v_list,l_neq)::new_partition)
+                  end
+              | _ -> Debug.internal_error "[recipe.ml >> factorise_general_formulas] There should not be more than one element in the list (1)"
+            end  
+        | symb::_, (symb',v_list,g_form_l)::q_part when Term.order_symbol symb symb' = -1 -> 
+            begin match search_matching_symbol f_list g_form q_part with
+              | None -> None
+              | Some(new_partition) -> Some((symb',v_list,List.filter (fun g_form_2 -> not (is_equal_general_formula g_form g_form_2)) g_form_l)::new_partition)
+            end
+        | _,_ -> None
+      in
+      
+      let rec search_matching_path p_list g_form partition_path = match p_list, partition_path with
+        | [],_ -> Some(partition_path)
+        | _,[] -> None
+        | path::q_path, (path',g_form_l)::q_part when is_equal_path path path' ->
+            let (l_equal,l_neq) = List.partition (is_equal_general_formula g_form) g_form_l in
+            
+            begin match l_equal with
+              | [] -> None
+              | [_] -> 
+                  begin match search_matching_path q_path g_form q_part with
+                    | None -> None
+                    | Some(new_partition) -> Some((path,l_neq)::new_partition)
+                  end
+              | _ -> Debug.internal_error "[recipe.ml >> factorise_general_formulas] There should not be more than one element in the list (2)"
+            end  
+        | path::_, (path',g_form_l)::q_part when order_path path path' = -1 -> 
+            begin match search_matching_path p_list g_form q_part with
+              | None -> None
+              | Some(new_partition) -> Some((path',List.filter (fun g_form_2 -> not (is_equal_general_formula g_form g_form_2)) g_form_l)::new_partition)
+            end
+        | _,_ -> None
+      in
+      
+      let pre_partneq = ref [] in
+      
+      let rec search_sub_neq f_list p_list = function
+        | [] -> []
+        | g_form::g_form_l -> 
+            begin match search_matching_symbol f_list g_form !partsymb with
+              | None -> g_form::(search_sub_neq f_list p_list g_form_l)
+              | Some(new_partsymb) ->
+                  begin match search_matching_path p_list g_form !partpath with
+                    | None -> g_form::(search_sub_neq f_list p_list g_form_l)
+                    | Some(new_partpath) ->
+                        let new_g_form = 
+                          {
+                            elt = g_form.elt;
+                            neg_to_remove = target_var::g_form.neg_to_remove;
+                            formula = g_form.formula
+                          } in
+                        
+                        partvar := List.map (fun (v,g_form_l_2) -> (v,List.filter (fun g_form_2 -> not (is_equal_general_formula new_g_form g_form_2)) g_form_l_2)) !partvar;
+                        pre_partneq := List.map (fun (f_list',p_list',g_form_l_2) -> (f_list',p_list',List.filter (fun g_form_2 -> not (is_equal_general_formula g_form g_form_2)) g_form_l_2)) !pre_partneq;
+                        partneq := List.map (fun (f_list',p_list',g_form_l_2) -> (f_list',p_list',List.filter (fun g_form_2 -> not (is_equal_general_formula g_form g_form_2)) g_form_l_2)) !partneq;
+                        partsymb := new_partsymb;
+                        partpath := new_partpath;
+                        partempty := new_g_form :: !partempty;
+                        
+                        search_sub_neq f_list p_list g_form_l
+                  end
+            end
+      in
+      
+      let rec search_neq () = match !partneq with
+        | [] -> partneq := !pre_partneq;
+            pre_partneq := []
+        | (f_list,p_list,g_form_l)::q ->
+            partneq := q;
+            let new_g_form_l = search_sub_neq f_list p_list g_form_l in
+            
+            if new_g_form_l <> []
+            then pre_partneq := (f_list,p_list,new_g_form_l) :: !pre_partneq;
+            
+            search_neq ()
+      in
+       
+      search_neq ();
+      
+      (* 3 - Generate the new general formulas *)
+      
+      let list_general_formula_1 = 
+        List.fold_left (fun acc (v,g_form_l) ->
+          List.fold_left (fun acc' g_form -> 
+            { g_form with formula = insert_in_sorted_list order_atomic (Eq (target_var,CVar v)) g_form.formula } :: acc'
+          ) acc g_form_l
+        ) [] !partvar
+      in
+      
+      let list_general_formula_2 =
+        List.fold_left (fun acc (path,g_form_l) ->
+          List.fold_left (fun acc' g_form -> 
+            { g_form with formula = insert_in_sorted_list order_atomic (Eq (target_var,CPath path)) g_form.formula } :: acc'
+          ) acc g_form_l
+        ) list_general_formula_1 !partpath
+      in
+      
+      let list_general_formula_3 = List.fold_left (fun acc g_form -> g_form::acc) list_general_formula_2 !partempty in
+      
+      let list_general_formula_4 = 
+        List.fold_left (fun acc (f_list,p_list,g_form_l) ->
+          List.fold_left (fun acc' g_form -> 
+            { g_form with formula = insert_in_sorted_list order_atomic (Neq (target_var,f_list,p_list)) g_form.formula } :: acc'
+          ) acc g_form_l
+        ) list_general_formula_3 !partneq
+      in
+      
+      let list_general_formula_5 = 
+        List.fold_left (fun acc (symb,v_list,g_form_l) ->
+          List.fold_left (fun acc' g_form -> 
+            let (context_args,new_formula) = List.fold_right (fun var (c_list,formula) ->
+              try
+                let (atm,new_formula) = search_and_remove (function 
+                  | Eq (var',_) when is_equal_variable var var' -> true
+                  | _ -> false
+                ) formula in
+                
+                let context = match atm with 
+                  | Eq(_,c) -> c
+                  | _ -> Debug.internal_error "[recipe.ml > factorise_formula] This case should not happen"
+                in
+                
+                (context::c_list,new_formula)
+              with Not_found -> (CVar(var)::c_list,formula)
+              ) v_list ([],g_form.formula)
+            in
+            
+            let new_formula' = insert_in_sorted_list order_atomic (Eq(target_var,CFunc(symb,context_args))) new_formula in
+            
+            { g_form with formula = new_formula' } :: acc'
+          ) acc g_form_l
+        ) list_general_formula_4 !partsymb
+      in
+      
+      list_general_formula_5
+    with
+      Not_found -> general_form_list
+      
+(********* Existentialise formula *********)
+
+let rec existentialise_context free_vars = function
+  | CVar({ link = VLink v;_}) -> CVar(v) 
+  | CVar(var) when List.exists (is_equal_variable var) free_vars -> CVar(var)
+  | CVar(var) -> 
+      let new_var = fresh_variable (get_support var) in
+      link_var var new_var;
+      CVar(new_var)
+  | CFunc(f,c_list) -> CFunc(f,List.map (existentialise_context free_vars) c_list)
+  | c -> c
+      
+let existentialise_atomic_formula free_vars = function
+  | Neq({link = VLink v;_},f_list,p_list) -> Neq(v,f_list,p_list)
+  | Neq(var,f_list,p_list) when List.exists (is_equal_variable var) free_vars -> Neq(var,f_list,p_list)
+  | Neq(var,f_list,p_list) -> 
+      let new_var = fresh_variable (get_support var) in
+      link_var var new_var;
+      Neq(new_var,f_list,p_list)
+  | Eq({link = VLink v;_},context) -> Eq(v,existentialise_context free_vars context)
+  | Eq(var,context) when List.exists (is_equal_variable var) free_vars -> Eq(var,existentialise_context free_vars context)
+  | Eq(var,context) ->
+      let new_var = fresh_variable (get_support var) in
+      link_var var new_var;
+      Eq(new_var,existentialise_context free_vars context)
+      
+let existentialise_general_formula free_vars g_form =
+  let new_formula = List.map (existentialise_atomic_formula free_vars) g_form.formula in
+  cleanup_var ();
+  { g_form with formula = new_formula }
+  
+(******* Generation of general_formula *******)  
+    
+let create_general_formula free_vars equation_recipe negation_list elt = 
+  
+  let subst = unify equation_recipe in
+  let subst' = filter_domain (fun v -> List.exists (is_equal_variable v) free_vars) subst in
+  
+  let formula = List.map (fun (v,r) -> Eq(v,context_of_recipe r)) subst' in
+  
+  let formula' = List.fold_left (fun acc (x,f_list,p_list) -> Neq(x,f_list,p_list)::acc) formula negation_list in
+  
+  let g_form = 
+    {
+      elt = elt;
+      neg_to_remove = [];
+      formula = formula'
+    } in
+  
+  existentialise_general_formula free_vars g_form
+  
+let get_variable_to_remove_from_general_formula g_form = g_form.neg_to_remove
+
+let get_elt_from_general_formula g_form = g_form.elt
+  
+  
 (*******************************
 ***         Display          ***
 ********************************)
@@ -510,6 +1054,26 @@ let rec display_formula = function
   | [c1,c2] -> (display_context c1)^" <> "^(display_context c2)
   | (c1,c2)::q -> (display_context c1)^" <> "^(display_context c2)^" \\/ "^(display_formula q)
   
+  
+let display_atomic_formula = function
+  | Neq(_,[],[]) -> ""
+  | Neq(var,[],p::q) -> Printf.sprintf "%s <> %s%s" (display_variable var) (display_path p) (
+      List.fold_right (fun path acc -> Printf.sprintf " /\\ %s <> %s%s" (display_variable var) (display_path path) acc) q "")
+  | Neq(var,f::q_f,p_list) ->
+      Printf.sprintf "Root(%s) <> %s%s%s" 
+        (display_variable var)
+        (Term.display_symbol_without_arity f) 
+        (List.fold_right (fun f' acc -> Printf.sprintf " /\\ Root(%s) <> %s%s" (display_variable var) (Term.display_symbol_without_arity f') acc) q_f "")
+        (List.fold_right (fun path acc -> Printf.sprintf " /\\ %s <> %s%s" (display_variable var) (display_path path) acc) p_list "")
+  | Eq(var,context) -> Printf.sprintf "%s = %s" (display_variable var) (display_context context)
+
+let display_general_formula g_form = match g_form.formula with
+  | [] -> "true"
+  | t::q -> 
+      Printf.sprintf "%s%s" 
+        (display_atomic_formula t) 
+        (List.fold_right (fun atm acc -> Printf.sprintf " /\\ %s%s" (display_atomic_formula atm) acc) q "")
+      
 (***********************************
 ***        Mapping function      ***
 ************************************)

@@ -179,6 +179,15 @@ let is_destructor sym = match sym.cat with
 
 let get_arity sym = sym.arity
 
+let order_symbol sym_1 sym_2 = match compare sym_1.name sym_2.name with
+  | -1 -> -1
+  | 1 -> 1
+  | 0 -> let ord = compare sym_1.arity sym_2.arity in
+      if ord = 0 && sym_1 != sym_2
+      then -1
+      else 0
+  | _ -> Debug.internal_error "[term.ml > order_symbol] The values can only be -1,0 or 1"
+
 (********* Generation of fresh names *********)
 
 let accumulator_name = ref 0

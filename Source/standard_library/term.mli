@@ -107,6 +107,11 @@ val is_constructor : symbol -> bool
 (** [is_destructor f] returns true iff [f] is a destructor. *)
 val is_destructor : symbol -> bool
 
+(** [order_symbol f1 f2] order the symbols [f1] and [f2]. Only the values [-1,0,1] are returned.
+    [0] stands for [f1] and [f2] being equal, [-1] (resp. [1]) when [f1] is smaller (resp. bigger)
+    then [f2].*)
+val order_symbol : symbol -> symbol -> int
+
 (** {3 Symbol Access} *)
 
 (** [get_arity f] returns the arity of the function symbol [f].*)

@@ -332,3 +332,22 @@ val simplify_formula : formula -> formula
 val apply_simplify_substitution_on_formulas : substitution -> 'a -> ('a -> (formula -> formula) -> 'a) -> 'a
 
 val display_formula : formula -> string
+
+(** {2 General formula on contexts of recipes} *)
+
+type 'a general_formula
+
+val create_general_formula : 
+  variable list -> 
+  (recipe * recipe) list -> 
+  (variable * (Term.symbol list) * (path list)) list ->
+  'a ->
+  'a general_formula
+  
+val get_variable_to_remove_from_general_formula : 'a general_formula -> variable list
+
+val get_elt_from_general_formula : 'a general_formula -> 'a
+
+val factorise_general_formulas : 'a general_formula list -> 'a general_formula list
+
+val display_general_formula : 'a general_formula -> string

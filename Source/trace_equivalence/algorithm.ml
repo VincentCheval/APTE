@@ -319,6 +319,27 @@ let rec apply_alternating left_symb_proc_list right_symb_proc_list =
     (next_function Strategy.apply_strategy_input)
     left_symb_proc_list
     right_symb_proc_list
+    
+(** The factorising alternating strategy *)
+
+let rec apply_alternating left_symb_proc_list right_symb_proc_list =
+  let next_function f_strat_m left_list right_list =
+    (***[Statistic]***)
+    Statistic.start_transition left_list right_list;
+    
+    apply_strategy_for_matrices (fun index_right_process matrix -> 
+        partionate_matrix apply_alternating left_list right_list index_right_process matrix
+      ) f_strat_m left_list right_list;
+      
+    (***[Statistic]***)
+    Statistic.end_transition ()
+  in
+
+  apply_strategy_one_transition 
+    (next_function Strategy.apply_strategy_output) 
+    (next_function Strategy.apply_strategy_input)
+    left_symb_proc_list
+    right_symb_proc_list
 
     
 (*****************************************
