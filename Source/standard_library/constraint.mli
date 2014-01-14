@@ -250,6 +250,15 @@ sig
   *)
   val is_same_structure : elt support_set -> elt support_set -> bool
 
+  (** [is_same_weaken_structure frame1 frame2] checks that every couple of frame constraints in [frame1] and [frame2]
+      of same application order have:
+      {ul
+        {li the same path }
+        {li the same support }
+        {li the same set of flags}
+      }
+  *)
+  val is_same_weaken_structure : elt support_set -> elt support_set -> bool
   
   (** {3 Display} *)
   
@@ -340,6 +349,9 @@ sig
       the flag [NoAxiom pos] is not in [dc]. Moreover, [s] is the support of [dc] *)
   val fold_left_frame_free_of_noAxiom : elt -> ('a -> Frame.elt -> 'a) -> 'a -> Frame.elt support_set -> 'a
   
+  (** [erase_flags dc] removes all flags from [dc]. *)
+  val erase_flags : elt -> elt
+  
   (** {3 Scanning} *)
   
   (** [is_all_noCons dc] returns [true] iff the flags [NoCons f] is in [dc] for all constructors [f]. *) 
@@ -363,6 +375,10 @@ sig
      a deducibility constraint. {% It corresponds to the rule (Nnosol) in~\thesisL{Figure 7.4}. %}
      @raise Internal_error if the rule {% $\Dest(\xi, \ell \rightarrow r, i)$ is not useless with $i$ being the support of %} [dc]*)
   val is_unsatisfiable : Frame.elt support_set -> elt -> bool
+  
+  val extract_path_of_noAxiom : Frame.elt support_set -> elt -> Recipe.path list
+  
+  val extract_symbol_of_noCons : elt -> Term.symbol list
   
   (** {3 Display} *)
   

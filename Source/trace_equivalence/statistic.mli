@@ -28,6 +28,8 @@ val start_transition : Process.symbolic_process list -> Process.symbolic_process
 
 val end_transition : unit -> unit
 
+val record_string : string -> unit
+
 (** Display function *)
 
 type display_mode = 

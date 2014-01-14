@@ -40,7 +40,7 @@ let rec apply_complete_unfolding left_symb_proc_list right_symb_proc_list =
     Trace_equivalence.Statistic.start_transition left_list right_list;
     
     Trace_equivalence.Algorithm.apply_strategy_for_matrices (fun index_right_process matrix -> 
-        Trace_equivalence.Algorithm.partionate_matrix test_for_length_on_leaves left_list right_list index_right_process matrix
+        Trace_equivalence.Algorithm.partionate_matrix (fun _ l_list r_list -> test_for_length_on_leaves l_list r_list) left_list right_list index_right_process matrix
       )  Trace_equivalence.Strategy.apply_full_strategy left_list right_list;
     
     (***[Statistic]***)
@@ -59,7 +59,7 @@ let rec apply_alternating left_symb_proc_list right_symb_proc_list =
     Trace_equivalence.Statistic.start_transition left_list right_list;
     
     Trace_equivalence.Algorithm.apply_strategy_for_matrices (fun index_right_process matrix -> 
-        Trace_equivalence.Algorithm.partionate_matrix (fun left_list' right_list' ->
+        Trace_equivalence.Algorithm.partionate_matrix (fun _ left_list' right_list' ->
             test_for_length_on_leaves left_list' right_list';
             apply_alternating left_list' right_list'
           ) left_list right_list index_right_process matrix
@@ -73,10 +73,7 @@ let rec apply_alternating left_symb_proc_list right_symb_proc_list =
     (next_function Trace_equivalence.Strategy.apply_strategy_output) 
     (next_function Trace_equivalence.Strategy.apply_strategy_input)
     left_symb_proc_list
-    right_symb_proc_list
-    
-    
-    
+    right_symb_proc_list    
   
 let decide_trace_equivalence process1 process2 =  
   (* We assume at this point that all name in the process are distinct *)
@@ -113,9 +110,12 @@ let decide_trace_equivalence process1 process2 =
   
   (* Application of the strategy *)
   try
-    if !Trace_equivalence.Algorithm.option_alternating_strategy
-    then apply_alternating [symb_proc1] [symb_proc2]
-    else apply_complete_unfolding [symb_proc1] [symb_proc2];
+    begin match !Trace_equivalence.Algorithm.choice_strategy with
+      | Trace_equivalence.Algorithm.Unfolding -> apply_complete_unfolding [symb_proc1] [symb_proc2]
+      | Trace_equivalence.Algorithm.Alternating -> apply_alternating [symb_proc1] [symb_proc2]
+      (* Need to think about the case of length for factorising *)
+      | Trace_equivalence.Algorithm.Factorising -> apply_alternating [symb_proc1] [symb_proc2]
+    end;
     true
   with
     | Trace_equivalence.Algorithm.Not_equivalent_left sym_proc ->

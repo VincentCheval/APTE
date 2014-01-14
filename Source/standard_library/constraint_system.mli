@@ -124,6 +124,8 @@ val set_no_universal_variable : constraint_system -> constraint_system
 
 val unset_no_universal_variable : constraint_system -> constraint_system
 
+val is_message_inequations : constraint_system -> bool
+
 (** [is_bottom c] returns [true] iff [c] is the constraint system {% $\bot$. %} *)
 val is_bottom : constraint_system -> bool
 

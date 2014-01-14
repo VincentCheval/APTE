@@ -277,6 +277,26 @@ let for_all2 s_range f_test set1 set2 =
   in 
   
   for_all_sub (set1,set2)
+  
+let for_all3 s_range f_test set1 set2 = 
+      
+  let s_test_sup,s_test = generate_test_support_range s_range in
+  
+  let rec for_all_sub = function
+    | [],[] -> true
+    | [],_ | _,[] -> false
+    | (s1,_)::_,(s2,_)::_ when s1 <> s2 -> false
+    | (s,_)::_,_ when s_test_sup s -> true
+    | (s,elt_list1)::q1, (_,elt_list2)::q2 when s_test s -> 
+        begin try
+          (List.for_all2 f_test elt_list1 elt_list2) &
+          (for_all_sub (q1,q2))
+        with Invalid_argument _ -> false
+        end
+    | _::q1,_::q2 -> for_all_sub (q1,q2)
+  in 
+  
+  for_all_sub (set1,set2)
 
 (********* Access  *********)
 
@@ -594,6 +614,44 @@ struct
     end
   ) frame1 frame2
   
+  let is_same_weaken_structure frame1 frame2 =
+    for_all3 SAll (fun frame_elt1 frame_elt2 -> 
+      Recipe.is_recipe_same_path frame_elt1.recipe frame_elt2.recipe &&
+      frame_elt1.support = frame_elt2.support &&
+      frame_elt1.noUse = frame_elt2.noUse &&
+      begin
+        match frame_elt1.noDedSubterm,frame_elt2.noDedSubterm with
+        | Some(YesDedSubterm s),Some(YesDedSubterm s') when s = s' -> 
+            Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message)
+        | Some(YesDedSubterm _),_ -> false
+        | _, Some(YesDedSubterm _) -> false
+        | Some(NoDedSubterm s), Some(NoDedSubterm s') ->
+            if Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message)
+            then s = s'
+            else true
+        | Some(NoDedSubterm _), _ ->
+            not (Term.is_function frame_elt2.message && Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message))
+        | _, Some(NoDedSubterm _) ->
+            not (Term.is_function frame_elt1.message && Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message))
+        | None, None -> true
+    end &&
+    begin
+      match frame_elt1.noDest,frame_elt2.noDest with
+        | Some(YesDest),Some(YesDest)-> true
+        | Some(YesDest),_ -> false
+        | _, Some(YesDest) -> false
+        | Some(NoDest s), Some(NoDest s') ->
+            if Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message)
+            then s = s'
+            else true
+        | Some(NoDest _), _ ->
+            not (Term.is_function frame_elt2.message && Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message))
+        | _, Some(NoDest _) ->
+            not (Term.is_function frame_elt1.message && Term.is_equal_symbol (Term.top frame_elt1.message) (Term.top frame_elt2.message))
+        | None, None -> true
+    end
+  ) frame1 frame2
+  
   (********* Display functions *********)
   
   let display_dedsubterm = function
@@ -767,6 +825,8 @@ struct
     in
     
     go_through acc frame cons.noAxiom
+    
+  let erase_flags ded_cons = { ded_cons with noCons = []; noAxiom = [] }
   
   (********* Scanning *********)  
   
@@ -847,6 +907,36 @@ struct
   ) &&
   (* Useless Axiom *)
   (go_through frame cons.noAxiom)
+  
+  let extract_path_of_noAxiom frame cons = 
+    
+    let supp = Recipe.get_support cons.variable in
+    
+    let rec go_through_elt acc elt_l flag_l i = match elt_l,flag_l with
+      | [],[] -> acc
+      | [],_ -> Debug.internal_error "[constraint.ml >> fold_left_frame_free_of_noAxiom] Unexpected case"
+      | f_elt::q, j::q_f when i = j -> 
+          let path = Recipe.path_of_recipe (Frame.get_recipe f_elt) in
+          
+          go_through_elt (path::acc) q q_f (i+1)
+      | _::q, _ ->
+          go_through_elt acc q flag_l (i+1)
+    in
+  
+    let rec go_through acc frame noaxiom = match frame,noaxiom with
+      | [], [] -> acc
+      | [],_ -> Debug.internal_error "[constraint.ml >> fold_left_frame_free_of_noAxiom] Unexpected case (2)"
+      | (s,_)::_, [] when s > supp -> acc
+      | (s,_)::_, _ when s > supp -> Debug.internal_error "[constraint.ml >> fold_left_frame_free_of_noAxiom] Unexpected case (3)"
+      | (s,elt_l)::q_f, (s',flag_l)::q_l when s = s' -> 
+          go_through (go_through_elt acc elt_l flag_l 1) q_f q_l
+      | (_,_)::q_f, _ -> go_through acc q_f noaxiom
+    in
+    
+    List.sort Recipe.order_path (go_through [] frame cons.noAxiom)
+    
+  let extract_symbol_of_noCons cons = 
+    List.sort Term.order_symbol cons.noCons
 
   (********* Display *********)   
 

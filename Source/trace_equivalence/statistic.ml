@@ -463,6 +463,12 @@ let sub_end_transition () =
   
   temporary_buffer := List.tl (!temporary_buffer)
 
+let record_string str = 
+  let temp_stat = List.hd !temporary_buffer in
+  
+  if temp_stat.size_trace_t <= !option_size_trace_log
+  then Printf.fprintf temp_stat.channel "%s" str
+  
 (** Record functions **)
 
 let record_matrix_function = ref (fun _ _ -> ())

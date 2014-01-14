@@ -20,23 +20,28 @@ let option_internal_communication = ref true
 
 let option_erase_double = ref true
 
-let option_alternating_strategy = ref true
+type type_strategy = 
+  | Unfolding
+  | Alternating
+  | Factorising
+
+let choice_strategy = ref Factorising
   
 (************************************
 ***    Partition of the matrix    ***
 *************************************)
   
-let rec add_left_in_partition bool_rep symb_proc = function
-  | [] -> [bool_rep, [symb_proc], []]
-  | (b_rep,left_symb,right_symb)::q when List.for_all2 (fun b1 b2 -> b1 = b2) b_rep bool_rep ->
-      (b_rep,symb_proc::left_symb,right_symb)::q
-  | rep::q -> rep::(add_left_in_partition bool_rep symb_proc q)
+let rec add_left_in_partition bool_rep j symb_proc = function
+  | [] -> [bool_rep, [j],[symb_proc], []]
+  | (b_rep,index_list,left_symb,right_symb)::q when List.for_all2 (fun b1 b2 -> b1 = b2) b_rep bool_rep ->
+      (b_rep,j::index_list, symb_proc::left_symb,right_symb)::q
+  | rep::q -> rep::(add_left_in_partition bool_rep j symb_proc q)
 
-let rec add_right_in_partition bool_rep symb_proc = function
+let rec add_right_in_partition bool_rep j symb_proc = function
   | [] -> Debug.internal_error "[algorithm.ml >> add_right_in_partition] A boolean representation must be found in the partition"
-  | (b_rep,left_symb,right_symb)::q when List.for_all2 (fun b1 b2 -> b1 = b2) b_rep bool_rep ->
-      (b_rep,left_symb,symb_proc::right_symb)::q
-  | rep::q -> rep::(add_right_in_partition bool_rep symb_proc q)
+  | (b_rep,index_list,left_symb,right_symb)::q when List.for_all2 (fun b1 b2 -> b1 = b2) b_rep bool_rep ->
+      (b_rep,j::index_list, left_symb,symb_proc::right_symb)::q
+  | rep::q -> rep::(add_right_in_partition bool_rep j symb_proc q)
 
 let partionate_matrix function_next left_symb_proc right_symb_proc index_right_process  matrix = 
   let nb_column = Constraint_system.Matrix.get_number_column matrix in
@@ -56,7 +61,7 @@ let partionate_matrix function_next left_symb_proc right_symb_proc index_right_p
     then ()
     else 
       let old_symb_proc = List.nth left_symb_proc (j-1) in
-      partition := add_left_in_partition bool_rep (Process.replace_constraint_system csys old_symb_proc) !partition
+      partition := add_left_in_partition bool_rep j (Process.replace_constraint_system csys old_symb_proc) !partition
   done;
   
   for j = index_right_process to nb_column do
@@ -72,10 +77,10 @@ let partionate_matrix function_next left_symb_proc right_symb_proc index_right_p
     then ()
     else 
       let old_symb_proc = List.nth right_symb_proc (j - index_right_process) in
-      partition := add_right_in_partition bool_rep (Process.replace_constraint_system csys old_symb_proc) !partition
+      partition := add_right_in_partition bool_rep j (Process.replace_constraint_system csys old_symb_proc) !partition
   done;
   
-  List.iter (fun (_,left_symb,right_symb) -> function_next left_symb right_symb) !partition
+  List.iter (fun (_,index_list,left_symb,right_symb) -> function_next index_list left_symb right_symb) !partition
 
 (************************************
 ***          Erase double         ***
@@ -264,7 +269,112 @@ let apply_strategy_one_transition next_function_output next_function_input left_
     
   if !left_input_set <> [] || !right_input_set <> []
   then next_function_input !left_input_set !right_input_set
+  
+(************************************************************
+***         Factorisation of second order formulas        ***
+*************************************************************)  
 
+let is_satisfy_factorisation_criteria left_list _ =
+  let csys = Process.get_constraint_system (List.hd left_list) in
+  
+  not (Constraint_system.is_message_inequations csys)
+  
+let add_symb_proc_in_partition index_list left_list right_list partition = 
+  
+  let first_csys = Process.get_constraint_system (List.hd left_list) in
+  let first_frame = Constraint_system.get_frame first_csys in
+  
+  let rec go_through_index = function 
+    | [] -> [first_frame,[(left_list,right_list)]]
+    | (frame,symb_list)::q when Constraint.Frame.is_same_weaken_structure frame first_frame ->
+        (frame,(left_list,right_list)::symb_list)::q
+    | t::q -> t::(go_through_index q)
+  in
+  
+  let rec go_through_partition = function
+    | [] -> [index_list,[first_frame,[(left_list,right_list)]]]
+    | (id_list,rest)::q ->
+        begin try
+          if List.for_all2 (fun id1 id2 -> id1 = id2) id_list index_list
+          then (id_list,go_through_index rest)::q
+          else (id_list,rest)::(go_through_partition q)
+        with Invalid_argument _ ->
+          (id_list,rest)::(go_through_partition q)
+        end
+  in
+  
+  partition := go_through_partition !partition
+  
+let generate_general_formula free_vars (left_list,right_list) = 
+  let csys = Process.get_constraint_system (List.hd left_list) in
+  
+  let recipe_eq = Constraint_system.get_recipe_equations csys in
+  let frame = Constraint_system.get_frame csys in 
+  let ded_set = Constraint_system.get_deducibility_constraint_set csys in
+  
+  let negation = Constraint.fold_left Constraint.SAll (fun acc elt ->
+    let f_list = Constraint.Deducibility.extract_symbol_of_noCons elt in
+    let p_list = Constraint.Deducibility.extract_path_of_noAxiom frame elt in
+    let var = Constraint.Deducibility.get_recipe_variable elt in
+    
+    if f_list = [] && p_list = []
+    then acc
+    else (var,f_list,p_list)::acc
+    ) [] ded_set
+  in
+  
+  Recipe.create_general_formula free_vars recipe_eq negation (left_list,right_list)
+  
+let interpret_result_partition general_formula =
+  let (left_list,right_list) = Recipe.get_elt_from_general_formula general_formula
+  and var_to_remove = Recipe.get_variable_to_remove_from_general_formula general_formula in
+  
+  let (left_csys_list,right_csys_list) = 
+    List.fold_left (fun (acc_l_csys,acc_r_csys) var -> 
+      let (_,position,first_csys_l) = 
+        Constraint_system.Phase_1.deducibility_search_and_replace 
+          (List.hd acc_l_csys)
+          Constraint.SAll 
+          (fun ded_cons -> Recipe.is_equal_variable (Constraint.Deducibility.get_recipe_variable ded_cons) var)
+          (fun ded_cons -> [Constraint.Deducibility.erase_flags ded_cons])
+      in
+    
+      let apply_pos list_c = List.map (fun csys ->
+        let _,csys' = Constraint_system.Phase_1.deducibility_replace csys position (fun ded_cons -> [Constraint.Deducibility.erase_flags ded_cons]) in
+        csys'
+        ) list_c in
+     
+      (first_csys_l::(apply_pos (List.tl acc_l_csys)),apply_pos acc_r_csys)
+    ) (List.map Process.get_constraint_system left_list,List.map Process.get_constraint_system right_list) var_to_remove
+  in
+  
+  let left_list' = List.map2 Process.replace_constraint_system left_csys_list left_list
+  and right_list' = List.map2 Process.replace_constraint_system right_csys_list right_list in
+  
+  (left_list',right_list')    
+  
+let go_through_partition free_vars f_next partition =
+  List.iter (fun (_,list_frame_symb) ->
+    List.iter (fun (_,left_right_list) ->
+      let list_g_form = List.map (generate_general_formula free_vars) left_right_list in
+      
+      (***[Statistic]***)
+      Statistic.record_string "----------------------\nBefore factorisation :\n";
+      List.iter (fun g_form -> Statistic.record_string (Printf.sprintf "%s\n" (Recipe.display_general_formula g_form))) list_g_form;
+      
+      let list_g_form' = Recipe.factorise_general_formulas list_g_form in
+      
+      (***[Statistic]***)
+      Statistic.record_string "\nAfter factorisation :\n";
+      List.iter (fun g_form -> Statistic.record_string (Printf.sprintf "%s\n" (Recipe.display_general_formula g_form))) list_g_form';
+      
+      List.iter (fun g_form -> 
+        let left_list,right_list = interpret_result_partition g_form in
+        f_next left_list right_list
+      ) list_g_form'
+    ) list_frame_symb
+  ) !partition
+        
 (*************************************
 ***         The strategies         ***
 **************************************)  
@@ -273,26 +383,15 @@ let apply_strategy_one_transition next_function_output next_function_input left_
 
 let rec apply_complete_unfolding left_symb_proc_list right_symb_proc_list = 
   let next_function left_list right_list = 
-    if Process.size_trace (List.hd left_list) = 1
-    then begin
-  
+    
     (***[Statistic]***)
     Statistic.start_transition left_list right_list;
-    
-    (** DEBUG **)
-    Printf.printf "----------\nLeft list\n";
-    List.iter (fun symb_proc -> Printf.printf "%s\n" (Process.display_trace_no_unif symb_proc)) left_list;
-    Printf.printf "Right list\n";
-    List.iter (fun symb_proc -> Printf.printf "%s\n" (Process.display_trace_no_unif symb_proc)) right_list;
-    
     
     apply_strategy_for_matrices (fun _ _ -> ()) Strategy.apply_full_strategy left_list right_list;
     
     (***[Statistic]***)
     Statistic.end_transition ();
-    end;
-    if Process.size_trace (List.hd left_list) <= 1
-    then
+    
     apply_complete_unfolding left_list right_list
     
   in
@@ -307,7 +406,7 @@ let rec apply_alternating left_symb_proc_list right_symb_proc_list =
     Statistic.start_transition left_list right_list;
     
     apply_strategy_for_matrices (fun index_right_process matrix -> 
-        partionate_matrix apply_alternating left_list right_list index_right_process matrix
+        partionate_matrix (fun _ l_list r_list -> apply_alternating l_list r_list) left_list right_list index_right_process matrix
       ) f_strat_m left_list right_list;
       
     (***[Statistic]***)
@@ -322,14 +421,33 @@ let rec apply_alternating left_symb_proc_list right_symb_proc_list =
     
 (** The factorising alternating strategy *)
 
-let rec apply_alternating left_symb_proc_list right_symb_proc_list =
+let rec apply_factorising_alternating left_symb_proc_list right_symb_proc_list =
   let next_function f_strat_m left_list right_list =
     (***[Statistic]***)
     Statistic.start_transition left_list right_list;
     
+    let free_vars = 
+      let csys = Process.get_constraint_system (List.hd left_list) in
+      
+      Constraint.fold_left Constraint.SAll (fun acc elt -> 
+        (Constraint.Deducibility.get_recipe_variable elt)::acc
+        ) [] (Constraint_system.get_deducibility_constraint_set csys)
+    in  
+        
+    let local_partition = ref [] in
+    
     apply_strategy_for_matrices (fun index_right_process matrix -> 
-        partionate_matrix apply_alternating left_list right_list index_right_process matrix
+        partionate_matrix (fun index_list l_list r_list ->
+          let norm_l_list = List.map Process.simplify l_list
+          and norm_r_list = List.map Process.simplify r_list in
+          
+          if is_satisfy_factorisation_criteria norm_l_list norm_r_list
+          then add_symb_proc_in_partition index_list norm_l_list norm_r_list local_partition
+          else apply_factorising_alternating norm_l_list norm_r_list
+        ) left_list right_list index_right_process matrix
       ) f_strat_m left_list right_list;
+     
+    go_through_partition free_vars apply_factorising_alternating local_partition;  
       
     (***[Statistic]***)
     Statistic.end_transition ()
@@ -381,9 +499,11 @@ let decide_trace_equivalence process1 process2 =
   
   (* Application of the strategy *)
   try
-    if !option_alternating_strategy
-    then apply_alternating [symb_proc1] [symb_proc2]
-    else apply_complete_unfolding [symb_proc1] [symb_proc2];
+    begin match !choice_strategy with
+      | Unfolding -> apply_complete_unfolding [symb_proc1] [symb_proc2]
+      | Alternating -> apply_alternating [symb_proc1] [symb_proc2]
+      | Factorising -> apply_factorising_alternating [symb_proc1] [symb_proc2]
+    end;
     true
   with
     | Not_equivalent_left sym_proc ->

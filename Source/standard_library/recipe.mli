@@ -225,6 +225,8 @@ val is_recipe_same_path : recipe -> recipe -> bool
 (** [is_path_of_recipe r p] returns [true] iff the path of [r] is [p]. *)
 val is_path_of_recipe : recipe -> path -> bool 
 
+val order_path : path -> path -> int
+
 (** {3 Display} *)
 
 val display_path : path -> string

@@ -9,12 +9,17 @@ val option_internal_communication : bool ref
 
 val option_erase_double : bool ref
 
-val option_alternating_strategy : bool ref
+type type_strategy = 
+  | Unfolding
+  | Alternating
+  | Factorising
+
+val choice_strategy : type_strategy ref
 
 (** Functions for the strategy *)
 
 val partionate_matrix :
-  (Process.symbolic_process list -> Process.symbolic_process list -> unit) ->
+  (int list -> Process.symbolic_process list -> Process.symbolic_process list -> unit) ->
   Process.symbolic_process list ->
   Process.symbolic_process list ->
   int ->

@@ -140,7 +140,10 @@ let _ =
           i := !i + 1
       | "-unfold" -> 
           Trace_equivalence.Algorithm.option_erase_double := false;
-          Trace_equivalence.Algorithm.option_alternating_strategy := false;
+          Trace_equivalence.Algorithm.choice_strategy := Trace_equivalence.Algorithm.Unfolding;
+          i := !i + 1
+      | "-alternate" -> 
+          Trace_equivalence.Algorithm.choice_strategy := Trace_equivalence.Algorithm.Alternating;
           i := !i + 1
       | "-no_erase" -> Trace_equivalence.Algorithm.option_erase_double := false;
           i := !i + 1

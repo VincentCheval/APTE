@@ -218,6 +218,10 @@ let unset_no_universal_variable csys = match csys with
   | Csys(sub_csys) -> 
       Csys({ sub_csys with no_more_universal_var = false})   
       
+let is_message_inequations csys = match csys with
+  | Bot -> false
+  | Csys(sub_csys) -> not (sub_csys.conjunction_message_neq = [])
+      
 (********* Iterators *********)
 
 exception Bottom_constraint_system 
